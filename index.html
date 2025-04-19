@@ -164,8 +164,8 @@
     <div id="status">Ожидание геолокации...</div>
     <div id="daily-time">Сегодня: 0 ч 0 мин 0 сек</div>
     <div class="button-group">
-      <button id="startButton" onclick="startTimer()">Запустить</button>
-      <button id="stopButton" onclick="stopTimer()" disabled>Остановить</button>
+      <button id="startButton">Запустить</button>
+      <button id="stopButton" disabled>Остановить</button>
     </div>
     <div id="export-import">
       <button onclick="exportData()">Экспорт данных</button>
@@ -373,9 +373,11 @@
     function checkLocation(position) {
       const currentTime = Date.now();
       if (currentTime - lastLocationCheck < 5000) {
+        console.log('checkLocation: слишком рано, пропускаем');
         return;
       }
       lastLocationCheck = currentTime;
+      console.log('checkLocation: выполняем проверку местоположения');
 
       const { latitude, longitude } = position.coords;
       const distance = calculateDistance(latitude, longitude, SCHOOL_LAT, SCHOOL_LON);
@@ -419,23 +421,29 @@
 
       trackingData.lastCheckTime = currentTime;
       localStorage.setItem('trackingData', JSON.stringify(trackingData));
-      updateReports();
     }
 
     // Логика запуска таймера
     function startTimer() {
       console.log('startTimer вызвана');
       const currentTime = Date.now();
+      console.log('Текущее время:', currentTime);
       startTimerLogic(currentTime);
       trackingData.lastCheckTime = currentTime;
       localStorage.setItem('trackingData', JSON.stringify(trackingData));
       updateStatus();
-      updateReports();
     }
 
     function startTimerLogic(currentTime) {
       console.log('startTimerLogic: isTimerRunning =', trackingData.isTimerRunning);
       if (!trackingData.isTimerRunning) {
+        // Закрываем предыдущую сессию, если она осталась открытой
+        const lastSession = trackingData.sessions[trackingData.sessions.length - 1];
+        if (lastSession && !lastSession.end) {
+          lastSession.end = currentTime;
+          console.log('Закрываем незавершённую сессию:', lastSession);
+        }
+
         if (timerInterval) {
           clearInterval(timerInterval);
           timerInterval = null;
@@ -449,9 +457,11 @@
 
         timerInterval = setInterval(() => {
           updateReports();
-        }, 5000);
+        }, 1000); // Обновляем каждую секунду
         showNotification(getRandomQuote());
         showNotification('Гони на полную, братишка! Пусть работа будет в кайф и всё зарешится! 💥');
+      } else {
+        console.log('Таймер уже запущен, пропускаем');
       }
     }
 
@@ -459,11 +469,11 @@
     function stopTimer() {
       console.log('stopTimer вызвана');
       const currentTime = Date.now();
+      console.log('Текущее время:', currentTime);
       stopTimerLogic(currentTime);
       trackingData.lastCheckTime = currentTime;
       localStorage.setItem('trackingData', JSON.stringify(trackingData));
       updateStatus();
-      updateReports();
     }
 
     function stopTimerLogic(currentTime) {
@@ -473,6 +483,9 @@
         const lastSession = trackingData.sessions[trackingData.sessions.length - 1];
         if (lastSession && !lastSession.end) {
           lastSession.end = currentTime;
+          console.log('Сессия закрыта:', lastSession);
+        } else {
+          console.log('Ошибка: последняя сессия уже закрыта или отсутствует');
         }
         startButton.disabled = false;
         stopButton.disabled = true;
@@ -545,9 +558,16 @@
     function calculateTimeInPeriod(start, end) {
       let totalSeconds = 0;
       trackingData.sessions.forEach(session => {
-        if (session.start >= start && (!session.end || session.end <= end)) {
-          const sessionEnd = session.end || Date.now();
-          totalSeconds += (sessionEnd - session.start) / 1000;
+        // Определяем начало и конец сессии
+        const sessionStart = session.start;
+        const sessionEnd = session.end || Date.now();
+
+        // Проверяем, пересекается ли сессия с периодом
+        if (sessionStart <= end && sessionEnd >= start) {
+          // Находим пересечение: начало и конец периода сессии внутри [start, end]
+          const effectiveStart = Math.max(sessionStart, start);
+          const effectiveEnd = Math.min(sessionEnd, end);
+          totalSeconds += (effectiveEnd - effectiveStart) / 1000;
         }
       });
       const hours = Math.floor(totalSeconds / 3600);
@@ -560,22 +580,45 @@
     function calculateAverageDailyTime() {
       const now = new Date();
       const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7).getTime();
-      let totalSeconds = 0;
-      let daysWithSessions = 0;
       const dailySessions = {};
 
+      // Инициализируем 7 дней
+      for (let i = 0; i < 7; i++) {
+        const dayStart = weekStart + i * 24 * 60 * 60 * 1000;
+        dailySessions[dayStart] = 0;
+      }
+
       trackingData.sessions.forEach(session => {
-        if (session.start >= weekStart) {
-          const sessionDay = new Date(session.start).toDateString();
-          if (!dailySessions[sessionDay]) {
-            dailySessions[sessionDay] = 0;
-            daysWithSessions++;
+        const sessionStart = session.start;
+        const sessionEnd = session.end || Date.now();
+
+        // Проверяем, попадает ли сессия в последние 7 дней
+        if (sessionStart <= now.getTime() && sessionEnd >= weekStart) {
+          // Для каждого дня в периоде сессии
+          const startDay = new Date(sessionStart).setHours(0, 0, 0, 0);
+          const endDay = new Date(sessionEnd).setHours(0, 0, 0, 0);
+
+          for (let day = startDay; day <= endDay; day += 24 * 60 * 60 * 1000) {
+            if (day >= weekStart) {
+              const dayEnd = day + 24 * 60 * 60 * 1000;
+              const effectiveStart = Math.max(sessionStart, day);
+              const effectiveEnd = Math.min(sessionEnd, dayEnd);
+              const seconds = (effectiveEnd - effectiveStart) / 1000;
+              dailySessions[day] = (dailySessions[day] || 0) + seconds;
+            }
           }
-          const sessionEnd = session.end || Date.now();
-          dailySessions[sessionDay] += (sessionEnd - session.start) / 1000;
-          totalSeconds += (sessionEnd - session.start) / 1000;
         }
       });
+
+      // Считаем среднее
+      let totalSeconds = 0;
+      let daysWithSessions = 0;
+      for (const day in dailySessions) {
+        if (dailySessions[day] > 0) {
+          totalSeconds += dailySessions[day];
+          daysWithSessions++;
+        }
+      }
 
       const averageSeconds = daysWithSessions ? totalSeconds / daysWithSessions : 0;
       const hours = Math.floor(averageSeconds / 3600);
@@ -637,18 +680,25 @@
     // Запуск отслеживания
     function startTracking() {
       if (navigator.geolocation) {
-        navigator.geolocation.watchPosition(checkLocation, handleError, {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 5000
-        });
+        navigator.permissions.query({ name: 'geolocation' }).then(permissionStatus => {
+          if (permissionStatus.state === 'denied') {
+            handleError({ code: 1, message: 'Геолокация отключена' });
+            return;
+          }
+          navigator.geolocation.watchPosition(checkLocation, handleError, {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 5000
+          });
 
-        navigator.geolocation.getCurrentPosition(position => {
-          const { latitude, longitude } = position.coords;
-          console.log(`Текущие координаты: ${latitude}, ${longitude}`);
-        }, handleError);
+          navigator.geolocation.getCurrentPosition(position => {
+            const { latitude, longitude } = position.coords;
+            console.log(`Текущие координаты: ${latitude}, ${longitude}`);
+          }, handleError);
+        });
       } else {
         document.getElementById('status').textContent = 'Геолокация не поддерживается';
+        showNotification('Бро, твой девайс не тянет геолокацию, сорян! 😕');
       }
     }
 
@@ -660,6 +710,10 @@
         console.error('Ошибка регистрации Service Worker:', err);
       });
     }
+
+    // Привязка событий для кнопок
+    startButton.addEventListener('click', startTimer);
+    stopButton.addEventListener('click', stopTimer);
 
     // Инициализация
     const isDark = localStorage.getItem('darkTheme') === 'true';
