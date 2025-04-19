@@ -7,6 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="School Tracker">
   <title>School Time Tracker</title>
+  <link rel="manifest" href="manifest.json">
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
@@ -78,6 +79,17 @@
       background: rgba(0, 0, 0, 0.05);
       border-radius: 8px;
     }
+    .notification {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #007AFF;
+      color: white;
+      padding: 10px;
+      border-radius: 5px;
+      z-index: 1000;
+    }
     @keyframes slideIn {
       from { transform: translateY(50px); opacity: 0; }
       to { transform: translateY(0); opacity: 1; }
@@ -120,6 +132,7 @@
 
     const startButton = document.getElementById('startButton');
     const stopButton = document.getElementById('stopButton');
+    let timerInterval;
 
     // Расчет расстояния
     function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -139,6 +152,9 @@
       const { latitude, longitude } = position.coords;
       const distance = calculateDistance(latitude, longitude, SCHOOL_LAT, SCHOOL_LON);
       const currentTime = Date.now();
+
+      // Отладка: показываем координаты и расстояние
+      console.log(`Координаты: ${latitude}, ${longitude}, Расстояние: ${distance} м`);
 
       if (distance <= SCHOOL_RADIUS) {
         if (!trackingData.isInSchool) {
@@ -181,6 +197,11 @@
         trackingData.sessions.push({ start: currentTime, end: null });
         startButton.disabled = true;
         stopButton.disabled = false;
+
+        // Запускаем интервал для обновления времени
+        timerInterval = setInterval(() => {
+          updateReports();
+        }, 1000);
       }
     }
 
@@ -203,6 +224,9 @@
         }
         startButton.disabled = false;
         stopButton.disabled = true;
+
+        // Останавливаем интервал
+        clearInterval(timerInterval);
       }
     }
 
@@ -217,30 +241,30 @@
       document.getElementById('status').textContent = statusText;
     }
 
-    // Уведомления
+    // Визуальные уведомления
     function showNotification(message) {
-      if (Notification.permission === 'granted') {
-        new Notification(message);
-      } else if (Notification.permission !== 'denied') {
-        Notification.requestPermission().then(permission => {
-          if (permission === 'granted') {
-            new Notification(message);
-          }
-        });
-      }
+      const notification = document.createElement('div');
+      notification.textContent = message;
+      notification.className = 'notification';
+      document.body.appendChild(notification);
+      setTimeout(() => {
+        notification.remove();
+      }, 3000);
     }
 
     // Обработка ошибок геолокации
     function handleError(error) {
-      document.getElementById('status').textContent = `Ошибка: ${error.message}`;
+      document.getElementById('status').textContent = `Ошибка геолокации: ${error.message}`;
+      console.log(error);
     }
 
     // Расчет времени за период
     function calculateTimeInPeriod(start, end) {
       let totalSeconds = 0;
       trackingData.sessions.forEach(session => {
-        if (session.end && session.start >= start && session.end <= end) {
-          totalSeconds += (session.end - session.start) / 1000;
+        if (session.start >= start && (!session.end || session.end <= end)) {
+          const sessionEnd = session.end || Date.now();
+          totalSeconds += (sessionEnd - session.start) / 1000;
         }
       });
       const hours = Math.floor(totalSeconds / 3600);
@@ -252,8 +276,9 @@
     function calculateTotalTime() {
       let totalSeconds = 0;
       trackingData.sessions.forEach(session => {
-        if (session.end) {
-          totalSeconds += (session.end - session.start) / 1000;
+        const sessionEnd = session.end || Date.now();
+        if (session.start) {
+          totalSeconds += (sessionEnd - session.start) / 1000;
         }
       });
       const hours = Math.floor(totalSeconds / 3600);
@@ -287,12 +312,18 @@
           timeout: 10000,
           maximumAge: 0
         });
+
+        // Отладка: проверка текущих координат
+        navigator.geolocation.getCurrentPosition(position => {
+          const { latitude, longitude } = position.coords;
+          console.log(`Текущие координаты: ${latitude}, ${longitude}`);
+        }, handleError);
       } else {
         document.getElementById('status').textContent = 'Геолокация не поддерживается';
       }
     }
 
-    // Service Worker для фонового обновления
+    // Service Worker
     const swCode = `
       self.addEventListener('install', event => {
         self.skipWaiting();
@@ -301,60 +332,17 @@
         self.clients.claim();
       });
       self.addEventListener('fetch', event => {});
-      self.addEventListener('periodicsync', event => {
-        if (event.tag === 'update-widget') {
-          event.waitUntil(
-            self.clients.matchAll().then(clients => {
-              clients.forEach(client => {
-                client.postMessage({ command: 'updateWidget' });
-              });
-            })
-          );
-        }
-      });
     `;
     const swBlob = new Blob([swCode], { type: 'application/javascript' });
     const swUrl = URL.createObjectURL(swBlob);
 
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register(swUrl).then(reg => {
-        if ('periodicSync' in reg) {
-          navigator.serviceWorker.ready.then(registration => {
-            registration.periodicSync.register('update-widget', {
-              minInterval: 24 * 60 * 60 * 1000 // Обновление раз в день
-            });
-          });
-        }
+        console.log('Service Worker зарегистрирован');
+      }).catch(err => {
+        console.error('Ошибка регистрации Service Worker:', err);
       });
     }
-
-    // Обработка сообщений от Service Worker
-    navigator.serviceWorker.addEventListener('message', event => {
-      if (event.data.command === 'updateWidget') {
-        updateReports();
-      }
-    });
-
-    // Манифест для PWA
-    const manifest = {
-      "name": "School Time Tracker",
-      "short_name": "School Tracker",
-      "start_url": ".",
-      "display": "standalone",
-      "background_color": "#f0f2f5",
-      "theme_color": "#007aff",
-      "scope": ".",
-      "icons": [{
-        "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3U3LAAAACXBIWXMAAAsTAAALEwEAmpwYAAAKT2lDQ1BQaG90b3Nob3AgSUNDIHByb2ZpbGUAAHjanVNnVFPpFj333vRCS4iAlEtvUhUIIFJCi4AUkSYqIQkQSoghodkVUcERRUUEG8igiAOOjoCMFVEsDIoK2AfkIaKOg6OIisr74Xnja9a89+bN/rXXPues852zzwfACAyWSDNRNYAMqUIeEeCDx8TG4eQuQIEKJHAAEAizZCFz/SMBAPh+PDwrIsAHvgABeNMLCADATZvAMByH/w/qQplcAYCEAcB0kThLCIAUAEB6jkKmAEBGAYCdmCZTAKAEAGDLY2LjAFAtAGAnf+bTAICd+Jl7AQBblCEVAaCRACATZYhEAGg7AKzPVopFAFgwABRmS8Q5ANgtADBJV2ZIALC3AMDOEAuyAAgMADBRiIUpAAR7AGDIIyN4AISZABRG8lc88SuuEOcqAAB4mbI8uWCPjWFAnfU9lSpNFy4BFCUUVlXJCTB5mLDMkWqBPnI9jJ3BYk3SQK8h6uThWvF4uXHFkyS6jd1YQXfks/0qI5mLweSFDgsh+MHqgtUWF6BA4yOGoMhcaw0xR08UNcAVpsGLZXjXjyb3UBu1KmJWWqNXzObtLUdZd7e0tNddr17d3WvVdescQ3Uz7/yX5L9HP0xOoPBTt4grlWnbbuBcx5xGks+DYzG0zctU1w2u55pKh0Lj6mk7YWA1ZxvnZBS5a2YvsZZMa2r0sh9pNufjK56srnMsu72rpaeK3tYE/51vclY5G96nM+ENaErE3M6+nXb6+nXj/2A9nWEh5zcz+78v+7b/ddv7U3B0fGvoz/L86d3L0d2d3L1d3L3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3dfacts: 0.5
-      }],
-      "orientation": "portrait"
-    };
-    const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
-    const manifestUrl = URL.createObjectURL(manifestBlob);
-    const link = document.createElement('link');
-    link.rel = 'manifest';
-    link.href = manifestUrl;
-    document.head.appendChild(link);
 
     // Инициализация
     startTracking();
