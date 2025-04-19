@@ -46,6 +46,7 @@
     .button-group {
       display: flex;
       gap: 8px;
+      margin-bottom: 10px;
     }
     button {
       background: #007AFF;
@@ -90,6 +91,35 @@
       border-radius: 5px;
       z-index: 1000;
     }
+    #username-section {
+      margin-bottom: 10px;
+      text-align: center;
+    }
+    #username-input {
+      padding: 5px;
+      font-size: 1em;
+      border-radius: 5px;
+      width: 80%;
+      margin-bottom: 5px;
+    }
+    #username-display {
+      font-size: 1em;
+      font-weight: 500;
+    }
+    #export-import {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    #export-import button {
+      background: #34C759;
+    }
+    #export-import button:active {
+      background: #28A745;
+    }
+    #import-input {
+      display: none;
+    }
     @keyframes slideIn {
       from { transform: translateY(50px); opacity: 0; }
       to { transform: translateY(0); opacity: 1; }
@@ -103,16 +133,26 @@
 </head>
 <body>
   <div class="widget-container">
+    <div id="username-section">
+      <div id="username-display"></div>
+      <input type="text" id="username-input" placeholder="Введите ваше имя">
+      <button onclick="saveUsername()">Сохранить имя</button>
+    </div>
     <div id="status">Ожидание геолокации...</div>
-    <div id="daily-time">Сегодня: 0 ч 0 мин</div>
+    <div id="daily-time">Сегодня: 0 ч 0 мин 0 сек</div>
     <div class="button-group">
       <button id="startButton" onclick="startTimer()">Запустить</button>
       <button id="stopButton" onclick="stopTimer()" disabled>Остановить</button>
     </div>
+    <div id="export-import">
+      <button onclick="exportData()">Экспорт данных</button>
+      <button onclick="document.getElementById('import-input').click()">Импорт данных</button>
+      <input type="file" id="import-input" accept=".json" onchange="importData(event)">
+    </div>
     <div class="full-reports">
-      <p>Неделя: <span id="weekly">0 ч 0 мин</span></p>
-      <p>Месяц: <span id="monthly">0 ч 0 мин</span></p>
-      <p>Всего: <span id="total">0 ч 0 мин</span></p>
+      <p>Неделя: <span id="weekly">0 ч 0 мин 0 сек</span></p>
+      <p>Месяц: <span id="monthly">0 ч 0 мин 0 сек</span></p>
+      <p>Всего: <span id="total">0 ч 0 мин 0 сек</span></p>
     </div>
   </div>
 
@@ -129,10 +169,83 @@
       isInSchool: false,
       isTimerRunning: false
     };
-
+    let username = localStorage.getItem('username') || '';
+    const usernameDisplay = document.getElementById('username-display');
+    const usernameInput = document.getElementById('username-input');
+    const usernameSection = document.getElementById('username-section');
     const startButton = document.getElementById('startButton');
     const stopButton = document.getElementById('stopButton');
-    let timerInterval;
+    let timerInterval = null;
+
+    // Инициализация интерфейса имени пользователя
+    function initUsername() {
+      if (username) {
+        usernameDisplay.textContent = `Пользователь: ${username}`;
+        usernameInput.style.display = 'none';
+        usernameSection.querySelector('button').style.display = 'none';
+      } else {
+        usernameDisplay.textContent = '';
+        usernameInput.style.display = 'block';
+        usernameSection.querySelector('button').style.display = 'block';
+      }
+    }
+
+    // Сохранение имени пользователя
+    function saveUsername() {
+      username = usernameInput.value.trim();
+      if (username) {
+        localStorage.setItem('username', username);
+        initUsername();
+        showNotification('Имя сохранено!');
+      } else {
+        showNotification('Пожалуйста, введите имя');
+      }
+    }
+
+    // Экспорт данных
+    function exportData() {
+      const data = {
+        username: username,
+        trackingData: trackingData
+      };
+      const dataStr = JSON.stringify(data, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `school-tracker-${username || 'user'}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showNotification('Данные экспортированы!');
+    }
+
+    // Импорт данных
+    function importData(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (data.username && data.trackingData) {
+            username = data.username;
+            trackingData = data.trackingData;
+            localStorage.setItem('username', username);
+            localStorage.setItem('trackingData', JSON.stringify(trackingData));
+            initUsername();
+            updateStatus();
+            updateReports();
+            showNotification('Данные импортированы!');
+          } else {
+            showNotification('Неверный формат файла');
+          }
+        } catch (err) {
+          showNotification('Ошибка при импорте данных');
+        }
+      };
+      reader.readAsText(file);
+    }
 
     // Расчет расстояния
     function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -153,7 +266,6 @@
       const distance = calculateDistance(latitude, longitude, SCHOOL_LAT, SCHOOL_LON);
       const currentTime = Date.now();
 
-      // Отладка: показываем координаты и расстояние
       console.log(`Координаты: ${latitude}, ${longitude}, Расстояние: ${distance} м`);
 
       if (distance <= SCHOOL_RADIUS) {
@@ -183,6 +295,7 @@
 
     // Логика запуска таймера
     function startTimer() {
+      console.log('startTimer вызвана');
       const currentTime = Date.now();
       startTimerLogic(currentTime);
       trackingData.lastCheckTime = currentTime;
@@ -192,13 +305,14 @@
     }
 
     function startTimerLogic(currentTime) {
+      console.log('startTimerLogic: isTimerRunning =', trackingData.isTimerRunning);
       if (!trackingData.isTimerRunning) {
         trackingData.isTimerRunning = true;
         trackingData.sessions.push({ start: currentTime, end: null });
         startButton.disabled = true;
         stopButton.disabled = false;
+        console.log('Кнопки: startButton.disabled =', startButton.disabled, 'stopButton.disabled =', stopButton.disabled);
 
-        // Запускаем интервал для обновления времени
         timerInterval = setInterval(() => {
           updateReports();
         }, 1000);
@@ -207,6 +321,7 @@
 
     // Логика остановки таймера
     function stopTimer() {
+      console.log('stopTimer вызвана');
       const currentTime = Date.now();
       stopTimerLogic(currentTime);
       trackingData.lastCheckTime = currentTime;
@@ -216,6 +331,7 @@
     }
 
     function stopTimerLogic(currentTime) {
+      console.log('stopTimerLogic: isTimerRunning =', trackingData.isTimerRunning);
       if (trackingData.isTimerRunning) {
         trackingData.isTimerRunning = false;
         const lastSession = trackingData.sessions[trackingData.sessions.length - 1];
@@ -224,9 +340,17 @@
         }
         startButton.disabled = false;
         stopButton.disabled = true;
+        console.log('Кнопки: startButton.disabled =', startButton.disabled, 'stopButton.disabled =', stopButton.disabled);
 
-        // Останавливаем интервал
-        clearInterval(timerInterval);
+        if (timerInterval) {
+          clearInterval(timerInterval);
+          timerInterval = null;
+          console.log('Таймер остановлен');
+        } else {
+          console.log('Ошибка: timerInterval не определён');
+        }
+      } else {
+        console.log('Таймер уже остановлен');
       }
     }
 
@@ -269,7 +393,8 @@
       });
       const hours = Math.floor(totalSeconds / 3600);
       const minutes = Math.floor((totalSeconds % 3600) / 60);
-      return `${hours} ч ${minutes} мин`;
+      const seconds = Math.floor(totalSeconds % 60);
+      return `${hours} ч ${minutes} мин ${seconds} сек`;
     }
 
     // Расчет общего времени
@@ -283,7 +408,8 @@
       });
       const hours = Math.floor(totalSeconds / 3600);
       const minutes = Math.floor((totalSeconds % 3600) / 60);
-      return `${hours} ч ${minutes} мин`;
+      const seconds = Math.floor(totalSeconds % 60);
+      return `${hours} ч ${minutes} мин ${seconds} сек`;
     }
 
     // Обновление отчетов
@@ -313,7 +439,6 @@
           maximumAge: 0
         });
 
-        // Отладка: проверка текущих координат
         navigator.geolocation.getCurrentPosition(position => {
           const { latitude, longitude } = position.coords;
           console.log(`Текущие координаты: ${latitude}, ${longitude}`);
@@ -345,6 +470,7 @@
     }
 
     // Инициализация
+    initUsername();
     startTracking();
     updateStatus();
     updateReports();
