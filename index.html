@@ -19,7 +19,7 @@
       margin: 0;
       background: linear-gradient(180deg, #f0f2f5 0%, #e5e7eb 100%);
       color: #000;
-      overflow: hidden;
+      overflow: auto;
     }
     .widget-container {
       background: rgba(255, 255, 255, 0.9);
@@ -37,6 +37,14 @@
       text-align: center;
       margin-bottom: 10px;
       color: #007AFF;
+    }
+    @keyframes blink {
+      0% { opacity: 1; }
+      50% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+    .blinking {
+      animation: blink 1s 3;
     }
     #daily-time {
       font-size: 0.9em;
@@ -120,14 +128,29 @@
     #import-input {
       display: none;
     }
+    #achievements {
+      margin-top: 10px;
+    }
+    #achievements ul {
+      list-style: none;
+      padding: 0;
+    }
+    #achievements li {
+      margin: 5px 0;
+    }
+    body.dark-theme {
+      background: linear-gradient(180deg, #1c2526 0%, #2d3b3c 100%);
+      color: #fff;
+    }
+    body.dark-theme .widget-container {
+      background: rgba(30, 30, 30, 0.9);
+    }
+    body.dark-theme .full-reports p {
+      background: rgba(255, 255, 255, 0.1);
+    }
     @keyframes slideIn {
       from { transform: translateY(50px); opacity: 0; }
       to { transform: translateY(0); opacity: 1; }
-    }
-    @media (prefers-color-scheme: dark) {
-      body { background: linear-gradient(180deg, #1c2526 0%, #2d3b3c 100%); color: #fff; }
-      .widget-container { background: rgba(30, 30, 30, 0.9); }
-      .full-reports p { background: rgba(255, 255, 255, 0.1); }
     }
   </style>
 </head>
@@ -153,14 +176,22 @@
       <p>Неделя: <span id="weekly">0 ч 0 мин 0 сек</span></p>
       <p>Месяц: <span id="monthly">0 ч 0 мин 0 сек</span></p>
       <p>Всего: <span id="total">0 ч 0 мин 0 сек</span></p>
+      <p>Среднее за день (7 дней): <span id="average">0 ч 0 мин 0 сек</span></p>
+    </div>
+    <div id="achievements">
+      <h4>Достижения</h4>
+      <ul id="achievements-list"></ul>
+    </div>
+    <div style="margin-top: 10px;">
+      <label>Тёмная тема: <input type="checkbox" id="dark-theme" onchange="toggleTheme()"></label>
     </div>
   </div>
 
   <script>
-    // Координаты школы
+    // Координаты школы (жёстко прописаны)
     const SCHOOL_LAT = 51.088513;
     const SCHOOL_LON = 71.414179;
-    const SCHOOL_RADIUS = 100; // Радиус в метрах
+    const SCHOOL_RADIUS = 100;
 
     // Хранилище данных
     let trackingData = JSON.parse(localStorage.getItem('trackingData')) || {
@@ -170,12 +201,28 @@
       isTimerRunning: false
     };
     let username = localStorage.getItem('username') || '';
+    let achievements = JSON.parse(localStorage.getItem('achievements')) || [];
+    let lastWeeklyCheck = localStorage.getItem('lastWeeklyCheck') || 0;
+    let lastWorkWish = parseInt(localStorage.getItem('lastWorkWish')) || 0;
+    let lastLocationCheck = 0;
+    let isNotificationActive = false;
     const usernameDisplay = document.getElementById('username-display');
     const usernameInput = document.getElementById('username-input');
     const usernameSection = document.getElementById('username-section');
     const startButton = document.getElementById('startButton');
     const stopButton = document.getElementById('stopButton');
     let timerInterval = null;
+
+    const quotes = [
+      "Учёба — это твой движ, врубай полный газ! 🚀",
+      "Ты ближе к топу, братишка, не трындец! 🌟",
+      "Знания — это твой лут, качай дальше! 💪",
+      "Сегодня день, чтобы зарешать всё на чиле! 📚"
+    ];
+
+    function getRandomQuote() {
+      return quotes[Math.floor(Math.random() * quotes.length)];
+    }
 
     // Инициализация интерфейса имени пользователя
     function initUsername() {
@@ -196,9 +243,9 @@
       if (username) {
         localStorage.setItem('username', username);
         initUsername();
-        showNotification('Имя сохранено!');
+        showNotification('Имя зашло чётко! 👍');
       } else {
-        showNotification('Пожалуйста, введите имя');
+        showNotification('Эй, без имени не трындец, введи что-нибудь! 😜');
       }
     }
 
@@ -206,7 +253,8 @@
     function exportData() {
       const data = {
         username: username,
-        trackingData: trackingData
+        trackingData: trackingData,
+        achievements: achievements
       };
       const dataStr = JSON.stringify(data, null, 2);
       const blob = new Blob([dataStr], { type: 'application/json' });
@@ -216,7 +264,8 @@
       a.download = `school-tracker-${username || 'user'}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      showNotification('Данные экспортированы!');
+      showNotification('Данные на экспорт улетели! 🚀 Чекай файл!');
+      localStorage.setItem('lastExport', Date.now());
     }
 
     // Импорт данных
@@ -231,20 +280,38 @@
           if (data.username && data.trackingData) {
             username = data.username;
             trackingData = data.trackingData;
+            achievements = data.achievements || [];
             localStorage.setItem('username', username);
             localStorage.setItem('trackingData', JSON.stringify(trackingData));
+            localStorage.setItem('achievements', JSON.stringify(achievements));
             initUsername();
             updateStatus();
             updateReports();
-            showNotification('Данные импортированы!');
+            updateAchievementsDisplay();
+            showNotification('Данные затащили, всё норм! 🤑');
           } else {
-            showNotification('Неверный формат файла');
+            showNotification('Файл не тянет, выбери нормальный! 😅');
           }
         } catch (err) {
-          showNotification('Ошибка при импорте данных');
+          showNotification('Что-то пошло похер, файл кривой! 🤔');
         }
       };
       reader.readAsText(file);
+    }
+
+    function checkExportReminder() {
+      const lastExport = parseInt(localStorage.getItem('lastExport')) || 0;
+      const now = Date.now();
+      const week = 7 * 24 * 60 * 60 * 1000;
+      if (now - lastExport > week) {
+        showNotification('Бро, не забудь данные скинуть в файл, а то потеряешь всё нафиг! 📥');
+      }
+    }
+
+    function toggleTheme() {
+      const isDark = document.getElementById('dark-theme').checked;
+      document.body.classList.toggle('dark-theme', isDark);
+      localStorage.setItem('darkTheme', isDark);
     }
 
     // Расчет расстояния
@@ -260,11 +327,58 @@
       return R * c;
     }
 
+    function parseTimeToSeconds(timeStr) {
+      const [hours, minutes, seconds] = timeStr.match(/\d+/g).map(Number);
+      return hours * 3600 + minutes * 60 + seconds;
+    }
+
+    function checkAchievements(currentTime) {
+      const date = new Date(currentTime);
+      const hours = date.getHours();
+
+      if (hours < 8 && !achievements.includes('early_bird')) {
+        achievements.push('early_bird');
+        showNotification('🏆 Ачивка в кармане: Ранний пташка! Ты в школе до 8 утра, красава! ☀️');
+      }
+      if (hours >= 18 && !achievements.includes('night_owl')) {
+        achievements.push('night_owl');
+        showNotification('🏆 Ачивка: Сова! Ты тусуешь в школе после 18:00, ваще огонь! 🌙');
+      }
+
+      const todayStart = new Date(currentTime).setHours(0, 0, 0, 0);
+      const todayTime = calculateTimeInPeriod(todayStart, currentTime);
+      const totalSeconds = parseTimeToSeconds(todayTime);
+      if (totalSeconds > 10 * 3600 && !achievements.includes('marathon')) {
+        achievements.push('marathon');
+        showNotification('🏆 Ачивка: Марафонец! 10+ часов в школе, ты просто монстр! 💥');
+      }
+
+      localStorage.setItem('achievements', JSON.stringify(achievements));
+      updateAchievementsDisplay();
+    }
+
+    function updateAchievementsDisplay() {
+      const list = document.getElementById('achievements-list');
+      list.innerHTML = '';
+      achievements.forEach(achievement => {
+        const li = document.createElement('li');
+        if (achievement === 'early_bird') li.textContent = '🏆 Ранний пташка: Пришёл до 8 утра';
+        if (achievement === 'night_owl') li.textContent = '🏆 Сова: Оставался после 18:00';
+        if (achievement === 'marathon') li.textContent = '🏆 Марафонец: Провёл более 10 часов в школе';
+        list.appendChild(li);
+      });
+    }
+
     // Проверка местоположения
     function checkLocation(position) {
+      const currentTime = Date.now();
+      if (currentTime - lastLocationCheck < 5000) {
+        return;
+      }
+      lastLocationCheck = currentTime;
+
       const { latitude, longitude } = position.coords;
       const distance = calculateDistance(latitude, longitude, SCHOOL_LAT, SCHOOL_LON);
-      const currentTime = Date.now();
 
       console.log(`Координаты: ${latitude}, ${longitude}, Расстояние: ${distance} м`);
 
@@ -273,16 +387,31 @@
           trackingData.isInSchool = true;
           if (!trackingData.isTimerRunning) {
             startTimerLogic(currentTime);
-            showNotification('Вы вошли в зону школы. Таймер запущен.');
+            showNotification('Ты в школе, братишка! Таймер поехал, погнали учиться! 📚');
           }
+          checkAchievements(currentTime);
           updateStatus();
+        } else {
+          checkAchievements(currentTime);
+          const todayStart = new Date(currentTime).setHours(0, 0, 0, 0);
+          const todayTime = calculateTimeInPeriod(todayStart, currentTime);
+          const totalSeconds = parseTimeToSeconds(todayTime);
+          if (totalSeconds > 8 * 3600) {
+            showNotification('Ты в школе уже 8+ часов, братишка! Похер, не забудь чиллануть! 🛋️');
+          }
+          const hour = 60 * 60 * 1000;
+          if (currentTime - lastWorkWish >= hour) {
+            showNotification('Держи ритм, братишка! Пусть всё заходит на ура и работа прёт! 🚀');
+            lastWorkWish = currentTime;
+            localStorage.setItem('lastWorkWish', lastWorkWish);
+          }
         }
       } else {
         if (trackingData.isInSchool) {
           trackingData.isInSchool = false;
           if (trackingData.isTimerRunning) {
             stopTimerLogic(currentTime);
-            showNotification('Вы покинули зону школы. Таймер остановлен.');
+            showNotification('Покинул школу, таймер на паузе. Отдыхай, легенда! 😎');
           }
           updateStatus();
         }
@@ -307,6 +436,11 @@
     function startTimerLogic(currentTime) {
       console.log('startTimerLogic: isTimerRunning =', trackingData.isTimerRunning);
       if (!trackingData.isTimerRunning) {
+        if (timerInterval) {
+          clearInterval(timerInterval);
+          timerInterval = null;
+        }
+
         trackingData.isTimerRunning = true;
         trackingData.sessions.push({ start: currentTime, end: null });
         startButton.disabled = true;
@@ -315,7 +449,9 @@
 
         timerInterval = setInterval(() => {
           updateReports();
-        }, 1000);
+        }, 5000);
+        showNotification(getRandomQuote());
+        showNotification('Гони на полную, братишка! Пусть работа будет в кайф и всё зарешится! 💥');
       }
     }
 
@@ -362,24 +498,47 @@
       } else {
         statusText += ' (Вне школы)';
       }
-      document.getElementById('status').textContent = statusText;
+      const statusElement = document.getElementById('status');
+      statusElement.textContent = statusText;
+      if (trackingData.isTimerRunning) {
+        statusElement.classList.add('blinking');
+      }
     }
 
     // Визуальные уведомления
     function showNotification(message) {
+      if (isNotificationActive) return;
+
+      isNotificationActive = true;
       const notification = document.createElement('div');
       notification.textContent = message;
       notification.className = 'notification';
       document.body.appendChild(notification);
       setTimeout(() => {
         notification.remove();
+        isNotificationActive = false;
       }, 3000);
     }
 
     // Обработка ошибок геолокации
     function handleError(error) {
-      document.getElementById('status').textContent = `Ошибка геолокации: ${error.message}`;
+      let errorMessage;
+      switch(error.code) {
+        case error.PERMISSION_DENIED:
+          errorMessage = 'Бро, ты не дал доступ к геолокации. Без этого не трындец, включи в настройках! 📍';
+          break;
+        case error.POSITION_UNAVAILABLE:
+          errorMessage = 'Не могу найти твою геолокацию, что-то пошло похер! 🤔';
+          break;
+        case error.TIMEOUT:
+          errorMessage = 'Геолокация таймаутнулась, попробуй ещё раз, братишка! ⏳';
+          break;
+        default:
+          errorMessage = `Ошибка геолокации: ${error.message}`;
+      }
+      document.getElementById('status').textContent = errorMessage;
       console.log(error);
+      showNotification(errorMessage);
     }
 
     // Расчет времени за период
@@ -394,6 +553,34 @@
       const hours = Math.floor(totalSeconds / 3600);
       const minutes = Math.floor((totalSeconds % 3600) / 60);
       const seconds = Math.floor(totalSeconds % 60);
+      return `${hours} ч ${minutes} мин ${seconds} сек`;
+    }
+
+    // Расчет среднего времени за день
+    function calculateAverageDailyTime() {
+      const now = new Date();
+      const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7).getTime();
+      let totalSeconds = 0;
+      let daysWithSessions = 0;
+      const dailySessions = {};
+
+      trackingData.sessions.forEach(session => {
+        if (session.start >= weekStart) {
+          const sessionDay = new Date(session.start).toDateString();
+          if (!dailySessions[sessionDay]) {
+            dailySessions[sessionDay] = 0;
+            daysWithSessions++;
+          }
+          const sessionEnd = session.end || Date.now();
+          dailySessions[sessionDay] += (sessionEnd - session.start) / 1000;
+          totalSeconds += (sessionEnd - session.start) / 1000;
+        }
+      });
+
+      const averageSeconds = daysWithSessions ? totalSeconds / daysWithSessions : 0;
+      const hours = Math.floor(averageSeconds / 3600);
+      const minutes = Math.floor((averageSeconds % 3600) / 60);
+      const seconds = Math.floor(averageSeconds % 60);
       return `${hours} ч ${minutes} мин ${seconds} сек`;
     }
 
@@ -428,6 +615,23 @@
       document.getElementById('monthly').textContent = calculateTimeInPeriod(monthStart, monthEnd);
 
       document.getElementById('total').textContent = calculateTotalTime();
+
+      document.getElementById('average').textContent = calculateAverageDailyTime();
+
+      const weeklyTimeStr = calculateTimeInPeriod(weekStart, now.getTime());
+      const weeklySeconds = parseTimeToSeconds(weeklyTimeStr);
+      const weeklyHours = weeklySeconds / 3600;
+      const todayStr = new Date().toDateString();
+      const lastCheckDate = new Date(parseInt(lastWeeklyCheck)).toDateString();
+
+      if (weeklyHours < 20 && todayStr !== lastCheckDate) {
+        const hoursLeft = 20 - weeklyHours;
+        showNotification(`Эй, ты пока отстаёшь! Надо ещё ${Math.ceil(hoursLeft)} ч тусить в школе, чтобы набрать 20 часов за неделю. Давай, поднажми! 🔥`);
+        localStorage.setItem('lastWeeklyCheck', Date.now());
+      } else if (weeklyHours >= 20 && todayStr !== lastCheckDate) {
+        showNotification('Красавчик, ты набрал 20 часов за неделю! 💪 Продолжай в том же духе!');
+        localStorage.setItem('lastWeeklyCheck', Date.now());
+      }
     }
 
     // Запуск отслеживания
@@ -436,7 +640,7 @@
         navigator.geolocation.watchPosition(checkLocation, handleError, {
           enableHighAccuracy: true,
           timeout: 10000,
-          maximumAge: 0
+          maximumAge: 5000
         });
 
         navigator.geolocation.getCurrentPosition(position => {
@@ -449,20 +653,8 @@
     }
 
     // Service Worker
-    const swCode = `
-      self.addEventListener('install', event => {
-        self.skipWaiting();
-      });
-      self.addEventListener('activate', event => {
-        self.clients.claim();
-      });
-      self.addEventListener('fetch', event => {});
-    `;
-    const swBlob = new Blob([swCode], { type: 'application/javascript' });
-    const swUrl = URL.createObjectURL(swBlob);
-
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register(swUrl).then(reg => {
+      navigator.serviceWorker.register('sw.js').then(reg => {
         console.log('Service Worker зарегистрирован');
       }).catch(err => {
         console.error('Ошибка регистрации Service Worker:', err);
@@ -470,10 +662,15 @@
     }
 
     // Инициализация
+    const isDark = localStorage.getItem('darkTheme') === 'true';
+    document.getElementById('dark-theme').checked = isDark;
+    document.body.classList.toggle('dark-theme', isDark);
     initUsername();
+    updateAchievementsDisplay();
     startTracking();
     updateStatus();
     updateReports();
+    checkExportReminder();
   </script>
 </body>
 </html>
